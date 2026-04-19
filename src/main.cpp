@@ -3,13 +3,31 @@
 #include "task.h"
 #include "stm32f1xx_hal.h"
 #include "SystemClockConfig.h"
+#include <string.h>
 
-int main(void){
+void System_Init(){
     HAL_Init();
     SystemClock_Config();
-    
-    App_Start();
-    vTaskStartScheduler();
+}
+UART_HandleTypeDef huart;
 
-    while(1);
+void Error_Handler(){
+    __disable_irq();
+    const char* msg = "System Error\r\n";
+
+    while(true){
+        if(huart.Instance != nullptr){
+            HAL_UART_Transmit_DMA(&huart, (uint8_t *)msg, strlen(msg));
+            HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+            HAL_Delay(500);
+        }
+    }
+    for(volatile int i = 0; i < 0xFFFF; i++);
+}
+
+int main(void){
+    System_Init();
+    App_Start();
+
+    while(true);
 }
