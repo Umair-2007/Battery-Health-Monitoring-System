@@ -12,22 +12,7 @@
 #include "semphr.h"
 #include "event_groups.h"
 
-static QueueHandle_t adcQueue;
-
-extern "C" {
-    void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
-        if(hadc->Instance == ADC1){
-            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-            uint16_t adcValue = HAL_ADC_GetValue(hadc);
-            xQueueSendFromISR(adcQueue, &adcValue, &xHigherPriorityTaskWoken);
-            HAL_ADC_Start_IT(hadc);
-            portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-        }
-    }
-}
-
 ADC_HandleTypeDef hadc;
-UART_HandleTypeDef huart;
 
 struct SensorData{
     float temperature, current, voltage;
@@ -35,14 +20,13 @@ struct SensorData{
 
 class SensorTask {
     public:
-    SensorTask(QueueHandle_t inQ, QueueHandle_t outQ) : inputQueue(inQ), outputQueue(outQ) {}
+    SensorTask(QueueHandle_t outQ) : outputQueue(outQ) {}
     
     void Start(){
         xTaskCreate(vSensorTask, "SENSORS", 512, this, 3, nullptr);
     }
 
     private:
-    QueueHandle_t inputQueue;
     QueueHandle_t outputQueue;
 
     static void vSensorTask(void *pvPara){
@@ -51,24 +35,26 @@ class SensorTask {
     }
 
     void run(){
-        uint16_t adcValue;
         SensorData data;
-        const float vREF = 3.3f, ADC_RESOLUTION = 4095.0f;
+        constexpr float vREF = 3.3f, ADC_RESOLUTION = 4095.0f;
+        constexpr float VOLTAGE_DIVIDER_RATIO = 11.f;
+        constexpr float SENSITIVITY = 0.185f; // for ACS712
+        constexpr float OFFSET = 1.65f;
 
         while(true){
-            if(xQueueReceive(inputQueue, &adcValue, portMAX_DELAY) == pdPASS){
-                data.temperature = (adcValue * vREF) / ADC_RESOLUTION;
+            uint16_t rawTemperature = ADC_Read(ADC_CHANNEL_0);
+            uint16_t rawCurrent = ADC_Read(ADC_CHANNEL_1);
+            uint16_t rawVoltage = ADC_Read(ADC_CHANNEL_2);
 
-                float pinVoltage = (static_cast<float>(adcValue) * vREF) / ADC_RESOLUTION;
-                const float VOLTAGE_DEVIDER_RATIO = 11.f;
-                data.voltage = pinVoltage * VOLTAGE_DEVIDER_RATIO;
+            float tPin = (static_cast<float>(rawTemperature) * vREF) / ADC_RESOLUTION;
+            data.temperature = tPin * 100.0f;
+            float vPin = (static_cast<float>(rawVoltage) * vREF) / ADC_RESOLUTION;
+            data.voltage = vPin * VOLTAGE_DIVIDER_RATIO;
+            float cPin = (static_cast<float>(rawCurrent) * vREF) / ADC_RESOLUTION;
+            data.current = (cPin - OFFSET) / SENSITIVITY;
 
-                const float SENSITIVITY = 0.185f;
-                const float OFFSET = 1.65f;
-                data.current = (pinVoltage - OFFSET) / SENSITIVITY;
-
-                xQueueSend(outputQueue, &data, portMAX_DELAY);
-            }
+            xQueueSend(outputQueue, &data, portMAX_DELAY);
+            vTaskDelay(pdMS_TO_TICKS(1000));
         }
     }
 };
@@ -91,40 +77,50 @@ class ControlTask {
 
     void run(){
         SensorData data;
+        TickType_t lastTempTime = 0;
+        TickType_t lastCurrentTime = 0;
+        TickType_t lastVoltageTime = 0;
+
+        constexpr TickType_t intervel = pdMS_TO_TICKS(1000);
+        TickType_t now = xTaskGetTickCount();
 
         while(true){
             if(xQueueReceive(inputQueue, &data, portMAX_DELAY) == pdPASS){
                 float temperature = data.temperature, current = data.current, voltage = data.voltage;
-
-                if(temperature > 60){
-                    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-                    HAL_Delay(500);
-                    UART_SendData("OVERHEAT!\r\n");
+                
+                if(temperature > 60.0f){
+                    if(now - lastTempTime >= intervel){
+                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+                        UART_SendData("OVERHEAT!\r\n");
+                        lastTempTime = now;
+                    }
                 }
                 if(current > 10.0f || current < -10.0f){
-                    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-                    HAL_Delay(500);
-                    UART_SendData("Check Current!\r\n");
+                    if(now - lastCurrentTime >= intervel){
+                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+                        UART_SendData("Check Current\r\n");
+                        lastCurrentTime = now;
+                    }
                 }
-                if(voltage > 12.6f || voltage < 9.0f){
-                    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_14);
-                    HAL_Delay(500);
-                    UART_SendData("Check Voltage!\r\n");
+                if(voltage > 12.0f || voltage < 9.0f){
+                    if(now - lastVoltageTime >= intervel){
+                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+                        UART_SendData("Check Voltage\r\n");
+                        lastVoltageTime = now;
+                    }
                 }
-                xQueueSend(outputQueue, &data, portMAX_DELAY);
             }
         }
     }
 };
 
 void App_Start(void){
-    adcQueue = xQueueCreate(10, sizeof(uint16_t));
-    QueueHandle_t resultQueue = xQueueCreate(10, sizeof(SensorData));
+    static QueueHandle_t adcQueue = xQueueCreate(10, sizeof(SensorData));
 
-    static SensorTask sensorTask(adcQueue, resultQueue);
+    static SensorTask sensorTask(adcQueue);
     sensorTask.Start();
 
-    static ControlTask controlTask(adcQueue, resultQueue);
+    static ControlTask controlTask(adcQueue, nullptr);
     controlTask.Start();
 
     HAL_ADC_Start_IT(&hadc);

@@ -28,6 +28,7 @@ void Error_Handler(){
 int main(void){
     System_Init();
     App_Start();
-
+    vTaskStartScheduler();
+    
     while(true);
 }
