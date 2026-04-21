@@ -40,6 +40,8 @@ class SensorTask {
         constexpr float VOLTAGE_DIVIDER_RATIO = 11.f;
         constexpr float SENSITIVITY = 0.185f; // for ACS712
         constexpr float OFFSET = 1.65f;
+        constexpr TickType_t interval = pdMS_TO_TICKS(1000);
+        TickType_t lastWakeTime = xTaskGetTickCount();
 
         while(true){
             uint16_t rawTemperature = ADC_Read(ADC_CHANNEL_0);
@@ -54,7 +56,7 @@ class SensorTask {
             data.current = (cPin - OFFSET) / SENSITIVITY;
 
             xQueueSend(outputQueue, &data, portMAX_DELAY);
-            vTaskDelay(pdMS_TO_TICKS(1000));
+            vTaskDelayUntil(&lastWakeTime, interval);
         }
     }
 };
@@ -81,29 +83,29 @@ class ControlTask {
         TickType_t lastCurrentTime = 0;
         TickType_t lastVoltageTime = 0;
 
-        constexpr TickType_t intervel = pdMS_TO_TICKS(1000);
-        TickType_t now = xTaskGetTickCount();
+        constexpr TickType_t interval = pdMS_TO_TICKS(1000);
 
         while(true){
             if(xQueueReceive(inputQueue, &data, portMAX_DELAY) == pdPASS){
+                TickType_t now = xTaskGetTickCount();
                 float temperature = data.temperature, current = data.current, voltage = data.voltage;
                 
                 if(temperature > 60.0f){
-                    if(now - lastTempTime >= intervel){
+                    if(now - lastTempTime >= interval){
                         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
                         UART_SendData("OVERHEAT!\r\n");
                         lastTempTime = now;
                     }
                 }
                 if(current > 10.0f || current < -10.0f){
-                    if(now - lastCurrentTime >= intervel){
+                    if(now - lastCurrentTime >= interval){
                         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
                         UART_SendData("Check Current\r\n");
                         lastCurrentTime = now;
                     }
                 }
                 if(voltage > 12.0f || voltage < 9.0f){
-                    if(now - lastVoltageTime >= intervel){
+                    if(now - lastVoltageTime >= interval){
                         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
                         UART_SendData("Check Voltage\r\n");
                         lastVoltageTime = now;
@@ -123,5 +125,5 @@ void App_Start(void){
     static ControlTask controlTask(adcQueue, nullptr);
     controlTask.Start();
 
-    HAL_ADC_Start_IT(&hadc);
+    HAL_ADC_Start(&hadc);
 }
