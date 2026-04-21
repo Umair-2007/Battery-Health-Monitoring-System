@@ -40,6 +40,7 @@ class SensorTask {
         constexpr float VOLTAGE_DIVIDER_RATIO = 11.f;
         constexpr float SENSITIVITY = 0.185f; // for ACS712
         constexpr float OFFSET = 1.65f;
+        
         constexpr TickType_t interval = pdMS_TO_TICKS(1000);
         TickType_t lastWakeTime = xTaskGetTickCount();
 

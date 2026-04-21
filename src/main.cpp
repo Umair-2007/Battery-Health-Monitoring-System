@@ -12,8 +12,7 @@ void System_Init(){
 UART_HandleTypeDef huart;
 
 void Error_Handler(){
-    __disable_irq();
-    const char* msg = "System Error\r\n";
+    constexpr char* msg = "System Error\r\n";
 
     while(true){
         if(huart.Instance != nullptr){
@@ -22,7 +21,6 @@ void Error_Handler(){
             HAL_Delay(500);
         }
     }
-    for(volatile int i = 0; i < 0xFFFF; i++);
 }
 
 int main(void){
