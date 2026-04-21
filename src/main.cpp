@@ -12,7 +12,7 @@ void System_Init(){
 UART_HandleTypeDef huart;
 
 void Error_Handler(){
-    constexpr char* msg = "System Error\r\n";
+    const char* msg = "System Error\r\n";
 
     while(true){
         if(huart.Instance != nullptr){
