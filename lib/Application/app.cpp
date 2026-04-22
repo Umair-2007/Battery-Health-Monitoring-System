@@ -12,8 +12,6 @@
 #include "semphr.h"
 #include "event_groups.h"
 
-ADC_HandleTypeDef hadc;
-
 struct SensorData{
     float temperature, current, voltage;
 };
@@ -124,6 +122,7 @@ class ControlTask {
 };
 
 void App_Start(void){
+    __HAL_RCC_GPIOC_CLK_ENABLE();
     static QueueHandle_t adcQueue = xQueueCreate(10, sizeof(SensorData));
 
     static SensorTask sensorTask(adcQueue);
@@ -131,6 +130,4 @@ void App_Start(void){
 
     static ControlTask controlTask(adcQueue, nullptr);
     controlTask.Start();
-
-    HAL_ADC_Start(&hadc);
 }

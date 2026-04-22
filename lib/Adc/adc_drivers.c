@@ -9,7 +9,7 @@ void ADC_Init(void){
     hadc.Init.ContinuousConvMode = DISABLE;
     hadc.Init.DiscontinuousConvMode = DISABLE;
     hadc.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-    hadc.Init.NbrOfConversion = 1;
+    hadc.Init.NbrOfConversion = 3;
     hadc.Init.DataAlign = ADC_DATAALIGN_RIGHT;
 
     if(HAL_ADC_Init(&hadc) != HAL_OK){
@@ -23,18 +23,18 @@ uint16_t ADC_Read(uint32_t channel){
 
     sConfig.Channel = channel;
     sConfig.Rank = ADC_REGULAR_RANK_1;
-    sConfig.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;
+    sConfig.SamplingTime = ADC_SAMPLETIME_28CYCLES_5;
 
     if(HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK){
         while(1);
     }
 
     HAL_ADC_Start(&hadc);
-    uint16_t adcValue = HAL_ADC_GetValue(&hadc);
-
-    if(HAL_ADC_PollForConversion(&hadc, HAL_MAX_DELAY) != HAL_OK){
+    if(HAL_ADC_PollForConversion(&hadc, 10) != HAL_OK){
         while(1);
     }
+
+    uint16_t adcValue = HAL_ADC_GetValue(&hadc);
     
     return adcValue; 
 }
