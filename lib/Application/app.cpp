@@ -18,6 +18,12 @@ struct SensorData{
     float temperature, current, voltage;
 };
 
+extern "C" {
+    void vApplicationIdleHook(void){
+        __WFI();
+    }
+}
+
 class SensorTask {
     public:
     SensorTask(QueueHandle_t outQ) : outputQueue(outQ) {}
@@ -40,7 +46,7 @@ class SensorTask {
         constexpr float VOLTAGE_DIVIDER_RATIO = 11.f;
         constexpr float SENSITIVITY = 0.185f; // for ACS712
         constexpr float OFFSET = 1.65f;
-        
+
         constexpr TickType_t interval = pdMS_TO_TICKS(1000);
         TickType_t lastWakeTime = xTaskGetTickCount();
 
@@ -100,14 +106,14 @@ class ControlTask {
                 }
                 if(current > 10.0f || current < -10.0f){
                     if(now - lastCurrentTime >= interval){
-                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_14);
                         UART_SendData("Check Current\r\n");
                         lastCurrentTime = now;
                     }
                 }
                 if(voltage > 12.0f || voltage < 9.0f){
                     if(now - lastVoltageTime >= interval){
-                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_15);
                         UART_SendData("Check Voltage\r\n");
                         lastVoltageTime = now;
                     }
