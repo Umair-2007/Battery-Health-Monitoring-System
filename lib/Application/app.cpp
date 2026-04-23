@@ -24,6 +24,8 @@ extern "C" {
     }
 }
 
+QueueHandle_t logQueue;
+
 class SensorTask {
     public:
     SensorTask(QueueHandle_t outQ) : outputQueue(outQ) {}
@@ -62,20 +64,44 @@ class SensorTask {
             float cPin = (static_cast<float>(rawCurrent) * vREF) / ADC_RESOLUTION;
             data.current = (cPin - OFFSET) / SENSITIVITY;
 
-            // Stream telemetry for iOS app (HM-10 BLE UART):
-            // Format: v_mV,i_mA,t_cC\n
             const int32_t v_mV = (int32_t)lroundf(data.voltage * 1000.0f);
             const int32_t i_mA = (int32_t)lroundf(data.current * 1000.0f);
             const int32_t t_cC = (int32_t)lroundf(data.temperature * 100.0f);
             char line[64];
-            const int n = snprintf(line, sizeof(line), "%ld,%ld,%ld\n",
-                                   (long)v_mV, (long)i_mA, (long)t_cC);
+            const int n = snprintf(line, sizeof(line), "%ld,%ld,%ld\n", (long)v_mV, (long)i_mA, (long)t_cC);
             if(n > 0){
-                UART_SendData(line);
+                xQueueSend(logQueue, line, 0);
             }
 
-            xQueueSend(outputQueue, &data, portMAX_DELAY);
+            xQueueOverwrite(outputQueue, &data);
             vTaskDelayUntil(&lastWakeTime, interval);
+        }
+    }
+};
+
+class LoggerTask {
+    public:
+    LoggerTask(QueueHandle_t q) : logQueue(q) {}
+
+    void Start(){
+        xTaskCreate(vLoggerTask, "LOGGER", 256, this, 1, nullptr);
+    }
+
+    private:
+    QueueHandle_t logQueue;
+
+    static void vLoggerTask(void *pvPara){
+        LoggerTask* task = static_cast<LoggerTask*>(pvPara);
+        task->run();
+    }
+
+    void run(){
+        char msg[64];
+
+        while(true){
+            if(xQueueReceive(logQueue, msg, portMAX_DELAY) == pdPASS){
+                UART_SendData(msg);
+            }
         }
     }
 };
@@ -111,24 +137,36 @@ class ControlTask {
                 
                 if(temperature > 60.0f){
                     if(now - lastTempTime >= interval){
-                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-                        UART_SendData("OVERHEAT!\r\n");
+                        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+                        char msg[64];
+                        snprintf(msg, sizeof(msg), "OVERHEAT!\r\n");
+                        xQueueSend(logQueue, msg, 0);
                         lastTempTime = now;
                     }
+                } else {
+                    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
                 }
                 if(current > 10.0f || current < -10.0f){
                     if(now - lastCurrentTime >= interval){
-                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_14);
-                        UART_SendData("Check Current\r\n");
+                        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET);
+                        char msg[64];
+                        snprintf(msg, sizeof(msg), "Check Current!\r\n");
+                        xQueueSend(logQueue, msg, 0);
                         lastCurrentTime = now;
                     }
+                } else {
+                    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_SET);
                 }
                 if(voltage > 12.0f || voltage < 9.0f){
                     if(now - lastVoltageTime >= interval){
-                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_15);
-                        UART_SendData("Check Voltage\r\n");
+                        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_RESET);
+                        char msg[64];
+                        snprintf(msg, sizeof(msg), "Check Voltage!\r\n");
+                        xQueueSend(logQueue, msg, 0);
                         lastVoltageTime = now;
                     }
+                } else {
+                    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET);
                 }
             }
         }
@@ -137,7 +175,8 @@ class ControlTask {
 
 void App_Start(void){
     __HAL_RCC_GPIOC_CLK_ENABLE();
-    static QueueHandle_t adcQueue = xQueueCreate(10, sizeof(SensorData));
+    static QueueHandle_t adcQueue = xQueueCreate(1, sizeof(SensorData));
+    logQueue = xQueueCreate(10, sizeof(char[64]));
 
     ADC_Init();
     UART_Init();
@@ -150,6 +189,9 @@ void App_Start(void){
 
     static SensorTask sensorTask(adcQueue);
     sensorTask.Start();
+
+    static LoggerTask loggerTask(logQueue);
+    loggerTask.Start();
 
     static ControlTask controlTask(adcQueue, nullptr);
     controlTask.Start();
