@@ -5,6 +5,8 @@
 
 #include <string.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <math.h>
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -59,6 +61,18 @@ class SensorTask {
             data.voltage = vPin * VOLTAGE_DIVIDER_RATIO;
             float cPin = (static_cast<float>(rawCurrent) * vREF) / ADC_RESOLUTION;
             data.current = (cPin - OFFSET) / SENSITIVITY;
+
+            // Stream telemetry for iOS app (HM-10 BLE UART):
+            // Format: v_mV,i_mA,t_cC\n
+            const int32_t v_mV = (int32_t)lroundf(data.voltage * 1000.0f);
+            const int32_t i_mA = (int32_t)lroundf(data.current * 1000.0f);
+            const int32_t t_cC = (int32_t)lroundf(data.temperature * 100.0f);
+            char line[64];
+            const int n = snprintf(line, sizeof(line), "%ld,%ld,%ld\n",
+                                   (long)v_mV, (long)i_mA, (long)t_cC);
+            if(n > 0){
+                UART_SendData(line);
+            }
 
             xQueueSend(outputQueue, &data, portMAX_DELAY);
             vTaskDelayUntil(&lastWakeTime, interval);
@@ -124,6 +138,15 @@ class ControlTask {
 void App_Start(void){
     __HAL_RCC_GPIOC_CLK_ENABLE();
     static QueueHandle_t adcQueue = xQueueCreate(10, sizeof(SensorData));
+
+    ADC_Init();
+    UART_Init();
+
+    GPIO_InitTypeDef gpio = {0};
+    gpio.Pin = GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
+    gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOC, &gpio);
 
     static SensorTask sensorTask(adcQueue);
     sensorTask.Start();

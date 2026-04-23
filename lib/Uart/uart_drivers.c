@@ -47,5 +47,5 @@ void UART_SendData(const char *data){
         }
     }
 
-    HAL_UART_Transmit_DMA(&huart, (uint8_t *)data, strlen(data));
+    (void)HAL_UART_Transmit(&huart, (uint8_t *)data, (uint16_t)strlen(data), 100);
 }
