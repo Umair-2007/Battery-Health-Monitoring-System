@@ -46,7 +46,7 @@ class SensorTask {
         SensorData data;
         constexpr float vREF = 3.3f, ADC_RESOLUTION = 4095.0f;
         constexpr float VOLTAGE_DIVIDER_RATIO = 11.f;
-        constexpr float SENSITIVITY = 0.185f; // for ACS712
+        constexpr float SENSITIVITY = 0.185f;
         constexpr float OFFSET = 1.65f;
 
         constexpr TickType_t interval = pdMS_TO_TICKS(1000);
