@@ -18,8 +18,10 @@ struct SensorData{
     float temperature, current, voltage;
 };
 
+volatile uint32_t idleCounter = 0;
 extern "C" {
     void vApplicationIdleHook(void){
+        idleCounter++;
         __WFI();
     }
 }
@@ -106,6 +108,48 @@ class LoggerTask {
     }
 };
 
+class MonitorTask {
+    public:
+    MonitorTask(QueueHandle_t outQ) : outputQueue(outQ) {}
+
+    void Start(){
+        xTaskCreate(vMonitorTask, "MONITOR", 256, this, 2, nullptr);
+    }
+
+    private:
+    QueueHandle_t outputQueue;
+
+    static void vMonitorTask(void *pvPara){
+        MonitorTask* task = static_cast<MonitorTask*>(pvPara);
+        task->run();
+    }
+
+    void run(){
+        uint32_t lastIdle = 0;
+        const int32_t maxIdle = 135000;
+        char msg[36];
+        TickType_t lastWakeTime = xTaskGetTickCount();
+
+        while(true){
+            vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(1000));
+
+            uint32_t currentIdle = idleCounter;
+            uint32_t idleDiff = currentIdle - lastIdle;
+            lastIdle = currentIdle;
+
+            uint32_t idlePercent = (idleDiff * 100) / maxIdle;
+            if(idlePercent > 100) idlePercent = 100;
+
+            uint32_t cpuLoad = 100 - idlePercent;
+
+            snprintf(msg, sizeof(msg), "CPU Load: %lu%%\r\n", (unsigned long) cpuLoad);
+            if(outputQueue != NULL){
+                xQueueSend(outputQueue, msg, pdMS_TO_TICKS(10));
+            }
+        }
+    }
+};
+
 class ControlTask {
     public:
     ControlTask(QueueHandle_t inQ, QueueHandle_t outQ) : inputQueue(inQ), outputQueue(outQ) {}
@@ -176,7 +220,7 @@ class ControlTask {
 void App_Start(void){
     __HAL_RCC_GPIOC_CLK_ENABLE();
     static QueueHandle_t adcQueue = xQueueCreate(1, sizeof(SensorData));
-    logQueue = xQueueCreate(10, sizeof(char[64]));
+    logQueue = xQueueCreate(20, sizeof(char[64]));
 
     ADC_Init();
     UART_Init();
@@ -189,6 +233,9 @@ void App_Start(void){
 
     static SensorTask sensorTask(adcQueue);
     sensorTask.Start();
+
+    static MonitorTask monitorTask(logQueue);
+    monitorTask.Start();
 
     static LoggerTask loggerTask(logQueue);
     loggerTask.Start();
