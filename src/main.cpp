@@ -9,6 +9,7 @@ void System_Init(){
     HAL_Init();
     SystemClock_Config();
 }
+
 UART_HandleTypeDef huart;
 
 void Error_Handler(){

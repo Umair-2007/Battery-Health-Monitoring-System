@@ -16,6 +16,7 @@
 
 struct SensorData{
     float temperature, current, voltage;
+    float soc;
 };
 
 volatile uint32_t idleCounter = 0;
@@ -27,6 +28,12 @@ extern "C" {
 }
 
 QueueHandle_t logQueue;
+
+float VoltageToSoc(float voltage){
+    if(voltage >= 12.6f) return 100;
+    if(voltage <= 11.8f) return 0;
+    return (voltage - 11.8f) * (100.0f / (12.6f - 11.8f));
+}
 
 class SensorTask {
     public:
@@ -51,6 +58,10 @@ class SensorTask {
         constexpr float SENSITIVITY = 0.185f;
         constexpr float OFFSET = 1.65f;
 
+        static float soc = 100.0f, socFiltered = 100.0f;
+        static bool firstrun = true;
+        constexpr static float capacity_Ah = 2.0f;
+
         constexpr TickType_t interval = pdMS_TO_TICKS(1000);
         TickType_t lastWakeTime = xTaskGetTickCount();
 
@@ -66,13 +77,57 @@ class SensorTask {
             float cPin = (static_cast<float>(rawCurrent) * vREF) / ADC_RESOLUTION;
             data.current = (cPin - OFFSET) / SENSITIVITY;
 
+            static TickType_t prevTime = 0;
+            TickType_t now = xTaskGetTickCount();
+            if(prevTime == 0) prevTime = now;
+            float dt = (now - prevTime) / (float)configTICK_RATE_HZ;
+            prevTime = now;
+
+            static float currentFiltered = 0.0f;
+            currentFiltered = 0.9f * currentFiltered + 0.1f * data.current;
+            data.current = currentFiltered;
+
+            if(firstrun){
+                soc = VoltageToSoc(data.voltage);
+                socFiltered = soc;
+                firstrun = false;
+            }
+
+            if(data.current > 0.05f){
+                soc -= (data.current * dt) / (capacity_Ah * 3600.0f) * 100.0f;
+            }
+            if(data.current < -0.05f){
+                soc += (-data.current * dt) / (capacity_Ah * 3600.0f) * 100.0f;
+            }
+
+            if(soc > 100) soc = 100;
+            if(soc < 0) soc = 0;
+
+            bool charging = (data.current < -0.05f);
+
+            if(fabs(data.current) < 0.2f){
+                float vSoc = VoltageToSoc(data.voltage);
+                soc = 0.97f * soc + 0.03f * vSoc;
+            }
+
+            if(data.voltage > 12.6f && charging){
+                soc = 100.0f;
+            }
+
+            socFiltered = 0.95f * socFiltered + 0.05f * soc;
+            if(socFiltered > 100) socFiltered = 100;
+            if(socFiltered < 0) socFiltered = 0;
+            data.soc = socFiltered;
+
             const int32_t v_mV = (int32_t)lroundf(data.voltage * 1000.0f);
             const int32_t i_mA = (int32_t)lroundf(data.current * 1000.0f);
             const int32_t t_cC = (int32_t)lroundf(data.temperature * 100.0f);
             char line[64];
-            const int n = snprintf(line, sizeof(line), "%ld,%ld,%ld\n", (long)v_mV, (long)i_mA, (long)t_cC);
+            const int n = snprintf(line, sizeof(line),
+                                   "%ldmV,%ldmA,%ldcC,%.1f%%\n",
+                                   (long)v_mV, (long)i_mA, (long)t_cC, data.soc);
             if(n > 0){
-                xQueueSend(logQueue, line, 0);
+                xQueueSend(logQueue, line, pdMS_TO_TICKS(10));
             }
 
             xQueueOverwrite(outputQueue, &data);
